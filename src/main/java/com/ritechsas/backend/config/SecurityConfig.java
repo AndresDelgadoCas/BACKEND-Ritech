@@ -21,6 +21,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import com.ritechsas.backend.service.DatabaseUserDetailsService;
 
+import jakarta.servlet.http.HttpServletResponse;
+
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfig {
@@ -28,10 +30,18 @@ public class SecurityConfig {
     private static final String FRONTEND_URL =
             "https://frontend-ritech.onrender.com";
 
+    // ---------------------------------------------------------
+    // Password encoder
+    // ---------------------------------------------------------
+
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
+
+    // ---------------------------------------------------------
+    // Authentication provider
+    // ---------------------------------------------------------
 
     @Bean
     public DaoAuthenticationProvider authenticationProvider(
@@ -46,17 +56,22 @@ public class SecurityConfig {
         return provider;
     }
 
+    // ---------------------------------------------------------
+    // Authentication manager
+    // ---------------------------------------------------------
+
     @Bean
     public AuthenticationManager authenticationManager(
-            AuthenticationConfiguration configuration) throws Exception {
+            AuthenticationConfiguration configuration)
+            throws Exception {
 
         return configuration.getAuthenticationManager();
     }
 
-    /*
-     * Configuración CORS:
-     * Permite que el frontend de Render se comunique con el backend.
-     */
+    // ---------------------------------------------------------
+    // CORS configuration
+    // ---------------------------------------------------------
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
 
@@ -66,28 +81,23 @@ public class SecurityConfig {
                 List.of(FRONTEND_URL)
         );
 
-        configuration.setAllowedMethods(
-                List.of(
-                        "GET",
-                        "POST",
-                        "PUT",
-                        "PATCH",
-                        "DELETE",
-                        "OPTIONS"
-                )
-        );
+        configuration.setAllowedMethods(List.of(
+                "GET",
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE",
+                "OPTIONS"
+        ));
 
-        configuration.setAllowedHeaders(
-                List.of(
-                        "Authorization",
-                        "Content-Type",
-                        "X-XSRF-TOKEN",
-                        "X-Requested-With"
-                )
-        );
+        configuration.setAllowedHeaders(List.of(
+                "Authorization",
+                "Content-Type",
+                "X-XSRF-TOKEN",
+                "X-Requested-With"
+        ));
 
         configuration.setAllowCredentials(true);
-
         configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source =
@@ -98,281 +108,311 @@ public class SecurityConfig {
         return source;
     }
 
+    // ---------------------------------------------------------
+    // Security filter chain
+    // ---------------------------------------------------------
+
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             DaoAuthenticationProvider authenticationProvider)
             throws Exception {
 
+        CookieCsrfTokenRepository csrfTokenRepository =
+                CookieCsrfTokenRepository.withHttpOnlyFalse();
+
+        // Permite que el frontend lea la cookie CSRF.
+        // SameSite=None permite solicitudes entre dominios.
+        csrfTokenRepository.setCookieCustomizer(cookie -> cookie
+                .sameSite("None")
+                .secure(true)
+                .path("/")
+        );
+
         http
-            // CORS debe procesarse antes de la autenticación
-            .cors(cors -> cors
-                    .configurationSource(corsConfigurationSource())
-            )
-
-            .authenticationProvider(authenticationProvider)
-
-            // Configuración CSRF
-            .csrf(csrf -> csrf
-                    .csrfTokenRepository(
-                            CookieCsrfTokenRepository.withHttpOnlyFalse()
-                    )
-                    .csrfTokenRequestHandler(
-                            new CsrfTokenRequestAttributeHandler()
-                    )
-            )
-
-            // Permisos de las rutas
-            .authorizeHttpRequests(auth -> auth
-
-                // Permitir solicitudes CORS preflight
-                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-
-                // Acceso público
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/health"
-                ).permitAll()
-
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/auth/csrf"
-                ).permitAll()
-
-                .requestMatchers(
-                        HttpMethod.POST,
-                        "/api/auth/login"
-                ).permitAll()
-
-                // Administración de usuarios
-                .requestMatchers(
-                        "/api/users",
-                        "/api/users/**"
-                ).hasRole("ADMINISTRADOR")
-
-                // Productores: consulta
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/producers",
-                        "/api/producers/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "COMPRAS",
-                        "GERENCIA",
-                        "INVENTARIO",
-                        "VENTAS"
+                // CORS
+                .cors(cors -> cors
+                        .configurationSource(corsConfigurationSource())
                 )
 
-                // Productores: escritura
-                .requestMatchers(
-                        "/api/producers",
-                        "/api/producers/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "COMPRAS"
+                // Authentication provider
+                .authenticationProvider(authenticationProvider)
+
+                // CSRF
+                .csrf(csrf -> csrf
+                        .csrfTokenRepository(csrfTokenRepository)
+                        .csrfTokenRequestHandler(
+                                new CsrfTokenRequestAttributeHandler()
+                        )
+
+                        // Prueba de diagnóstico:
+                        // permite que el login no sea bloqueado por CSRF.
+                        // CSRF continúa activo para las demás rutas.
+                        .ignoringRequestMatchers("/api/auth/login")
                 )
 
-                // Compras: consulta
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/purchases",
-                        "/api/purchases/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "COMPRAS",
-                        "GERENCIA"
+                // Authorization
+                .authorizeHttpRequests(auth -> auth
+
+                        // CORS preflight
+                        .requestMatchers(
+                                HttpMethod.OPTIONS,
+                                "/**"
+                        ).permitAll()
+
+                        // Public routes
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/health"
+                        ).permitAll()
+
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/auth/csrf"
+                        ).permitAll()
+
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/auth/login"
+                        ).permitAll()
+
+                        // User administration
+                        .requestMatchers(
+                                "/api/users",
+                                "/api/users/**"
+                        ).hasRole("ADMINISTRADOR")
+
+                        // Producers: read
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/producers",
+                                "/api/producers/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "COMPRAS",
+                                "GERENCIA",
+                                "INVENTARIO",
+                                "VENTAS"
+                        )
+
+                        // Producers: write
+                        .requestMatchers(
+                                "/api/producers",
+                                "/api/producers/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "COMPRAS"
+                        )
+
+                        // Purchases: read
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/purchases",
+                                "/api/purchases/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "COMPRAS",
+                                "GERENCIA"
+                        )
+
+                        // Purchases: write
+                        .requestMatchers(
+                                "/api/purchases",
+                                "/api/purchases/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "COMPRAS"
+                        )
+
+                        // Products: read
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/products",
+                                "/api/products/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "COMPRAS",
+                                "INVENTARIO",
+                                "EXPORTADOR",
+                                "VENTAS",
+                                "GERENCIA"
+                        )
+
+                        // Products: write
+                        .requestMatchers(
+                                "/api/products",
+                                "/api/products/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "INVENTARIO"
+                        )
+
+                        // Inventory lots: read
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/inventory-lots",
+                                "/api/inventory-lots/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "COMPRAS",
+                                "INVENTARIO",
+                                "EXPORTADOR",
+                                "VENTAS",
+                                "GERENCIA"
+                        )
+
+                        // Inventory lots: write
+                        .requestMatchers(
+                                "/api/inventory-lots",
+                                "/api/inventory-lots/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "INVENTARIO"
+                        )
+
+                        // Certifications: read
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/certifications",
+                                "/api/certifications/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "INVENTARIO",
+                                "EXPORTADOR",
+                                "GERENCIA"
+                        )
+
+                        // Certifications: write
+                        .requestMatchers(
+                                "/api/certifications",
+                                "/api/certifications/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "EXPORTADOR"
+                        )
+
+                        // Clients: read
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/clients",
+                                "/api/clients/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "EXPORTADOR",
+                                "VENTAS",
+                                "GERENCIA"
+                        )
+
+                        // Clients: write
+                        .requestMatchers(
+                                "/api/clients",
+                                "/api/clients/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "VENTAS"
+                        )
+
+                        // Export orders and items: read
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/export-orders",
+                                "/api/export-orders/**",
+                                "/api/export-order-items",
+                                "/api/export-order-items/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "INVENTARIO",
+                                "EXPORTADOR",
+                                "VENTAS",
+                                "GERENCIA"
+                        )
+
+                        // Export orders and items: write
+                        .requestMatchers(
+                                "/api/export-orders",
+                                "/api/export-orders/**",
+                                "/api/export-order-items",
+                                "/api/export-order-items/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "EXPORTADOR"
+                        )
+
+                        // Export documents: read
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/export-documents",
+                                "/api/export-documents/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "EXPORTADOR",
+                                "GERENCIA"
+                        )
+
+                        // Export documents: write
+                        .requestMatchers(
+                                "/api/export-documents",
+                                "/api/export-documents/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "EXPORTADOR"
+                        )
+
+                        // Shipments: read
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/shipments",
+                                "/api/shipments/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "EXPORTADOR",
+                                "GERENCIA"
+                        )
+
+                        // Shipments: write
+                        .requestMatchers(
+                                "/api/shipments",
+                                "/api/shipments/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "EXPORTADOR"
+                        )
+
+                        // Traceability reports
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/reports/traceability/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "GERENCIA",
+                                "EXPORTADOR"
+                        )
+
+                        // Other reports
+                        .requestMatchers(
+                                "/api/reports/**"
+                        ).hasAnyRole(
+                                "ADMINISTRADOR",
+                                "GERENCIA"
+                        )
+
+                        // Every other route requires authentication
+                        .anyRequest().authenticated()
                 )
 
-                // Compras: escritura
-                .requestMatchers(
-                        "/api/purchases",
-                        "/api/purchases/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "COMPRAS"
-                )
+                // API does not use form login or HTTP Basic
+                .formLogin(form -> form.disable())
+                .httpBasic(basic -> basic.disable())
 
-                // Productos: consulta
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/products",
-                        "/api/products/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "COMPRAS",
-                        "INVENTARIO",
-                        "EXPORTADOR",
-                        "VENTAS",
-                        "GERENCIA"
-                )
-
-                // Productos: escritura
-                .requestMatchers(
-                        "/api/products",
-                        "/api/products/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "INVENTARIO"
-                )
-
-                // Inventario: consulta
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/inventory-lots",
-                        "/api/inventory-lots/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "COMPRAS",
-                        "INVENTARIO",
-                        "EXPORTADOR",
-                        "VENTAS",
-                        "GERENCIA"
-                )
-
-                // Inventario: escritura
-                .requestMatchers(
-                        "/api/inventory-lots",
-                        "/api/inventory-lots/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "INVENTARIO"
-                )
-
-                // Certificaciones: consulta
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/certifications",
-                        "/api/certifications/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "INVENTARIO",
-                        "EXPORTADOR",
-                        "GERENCIA"
-                )
-
-                // Certificaciones: escritura
-                .requestMatchers(
-                        "/api/certifications",
-                        "/api/certifications/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "EXPORTADOR"
-                )
-
-                // Clientes: consulta
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/clients",
-                        "/api/clients/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "EXPORTADOR",
-                        "VENTAS",
-                        "GERENCIA"
-                )
-
-                // Clientes: escritura
-                .requestMatchers(
-                        "/api/clients",
-                        "/api/clients/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "VENTAS"
-                )
-
-                // Órdenes e ítems de exportación: consulta
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/export-orders",
-                        "/api/export-orders/**",
-                        "/api/export-order-items",
-                        "/api/export-order-items/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "INVENTARIO",
-                        "EXPORTADOR",
-                        "VENTAS",
-                        "GERENCIA"
-                )
-
-                // Órdenes e ítems de exportación: escritura
-                .requestMatchers(
-                        "/api/export-orders",
-                        "/api/export-orders/**",
-                        "/api/export-order-items",
-                        "/api/export-order-items/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "EXPORTADOR"
-                )
-
-                // Documentos de exportación: consulta
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/export-documents",
-                        "/api/export-documents/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "EXPORTADOR",
-                        "GERENCIA"
-                )
-
-                // Documentos de exportación: escritura
-                .requestMatchers(
-                        "/api/export-documents",
-                        "/api/export-documents/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "EXPORTADOR"
-                )
-
-                // Envíos: consulta
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/shipments",
-                        "/api/shipments/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "EXPORTADOR",
-                        "GERENCIA"
-                )
-
-                // Envíos: escritura
-                .requestMatchers(
-                        "/api/shipments",
-                        "/api/shipments/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "EXPORTADOR"
-                )
-
-                // Trazabilidad: consulta
-                .requestMatchers(
-                        HttpMethod.GET,
-                        "/api/reports/traceability/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "GERENCIA",
-                        "EXPORTADOR"
-                )
-
-                // Otros reportes
-                .requestMatchers(
-                        "/api/reports/**"
-                ).hasAnyRole(
-                        "ADMINISTRADOR",
-                        "GERENCIA"
-                )
-
-                // Cualquier otra ruta requiere autenticación
-                .anyRequest().authenticated()
-            )
-
-            // Desactivar autenticación HTTP por formulario
-            .formLogin(form -> form.disable())
-
-            // Desactivar autenticación HTTP Basic
-            .httpBasic(basic -> basic.disable());
+                // Return 401 for unauthenticated requests
+                .exceptionHandling(exception -> exception
+                        .authenticationEntryPoint(
+                                (request, response, authException) ->
+                                        response.sendError(
+                                                HttpServletResponse.SC_UNAUTHORIZED
+                                        )
+                        )
+                );
 
         return http.build();
     }
