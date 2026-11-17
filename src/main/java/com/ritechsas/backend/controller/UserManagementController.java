@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.core.Authentication;
 
 import com.ritechsas.backend.dto.CreateUserRequest;
 import com.ritechsas.backend.dto.LoginResponse;
@@ -42,16 +43,17 @@ public class UserManagementController {
     @PostMapping
     @PreAuthorize("hasRole('ADMINISTRADOR')")
     public ResponseEntity<LoginResponse> createUser(
-            @Valid @RequestBody CreateUserRequest request) {
+            @Valid @RequestBody CreateUserRequest request, Authentication authentication) {
 
-        User user = userManagementService.createUser(request);
+        User user = userManagementService.createUser(request, authentication.getName());
 
         LoginResponse response = new LoginResponse(
             user.getId(),
             user.getFullName(),
             user.getUsername(),
             user.getEmail(),
-            user.getRole().getName()
+            user.getRole().getName(),
+            user.getRoles().stream().map(r -> r.getName()).collect(java.util.stream.Collectors.toSet())
         );
 
         return ResponseEntity.status(HttpStatus.CREATED).body(response);

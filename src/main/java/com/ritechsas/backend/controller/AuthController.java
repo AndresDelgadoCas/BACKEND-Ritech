@@ -89,7 +89,8 @@ public class AuthController {
                     user.getFullName(),
                     user.getUsername(),
                     user.getEmail(),
-                    user.getRole().getName()
+                    user.getRole().getName(),
+                    user.getRoles().stream().map(r -> r.getName()).collect(java.util.stream.Collectors.toSet())
             );
 
             return ResponseEntity.ok(response);
@@ -132,7 +133,8 @@ public class AuthController {
                     user.getFullName(),
                     user.getUsername(),
                     user.getEmail(),
-                    user.getRole().getName()
+                    user.getRole().getName(),
+                    user.getRoles().stream().map(r -> r.getName()).collect(java.util.stream.Collectors.toSet())
                 )
         );
     }

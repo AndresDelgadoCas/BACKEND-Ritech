@@ -18,5 +18,7 @@ public interface ExportOrderRepository
 
     List<ExportOrder> findByClientId(Long clientId);
 
+    List<ExportOrder> findByClient_UserIdOrderByOrderDateDesc(Long userId);
+
     List<ExportOrder> findByStatus(OrderStatus status);
 }

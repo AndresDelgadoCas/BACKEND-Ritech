@@ -19,10 +19,15 @@ public record CreateUserRequest(
     String email,
 
     @NotBlank(message = "La contraseña es obligatoria")
-    @Size(min = 12, max = 72,
-          message = "La contraseña debe tener entre 12 y 72 caracteres")
+    @Size(min = 12, max = 72, message = "La contraseña debe tener entre 12 y 72 caracteres")
     String password,
 
     @NotBlank(message = "El rol es obligatorio")
-    String role
+    String role,
+
+    @Size(max = 180) String companyName,
+    @Size(max = 150) String contactName,
+    @Size(max = 100) String country,
+    @Size(max = 30) String phone,
+    @Size(max = 255) String address
 ) {}

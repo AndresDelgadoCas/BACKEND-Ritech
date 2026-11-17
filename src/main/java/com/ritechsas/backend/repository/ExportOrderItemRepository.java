@@ -18,6 +18,8 @@ public interface ExportOrderItemRepository
 
     List<ExportOrderItem> findByInventoryLot_Id(Long lotId);
 
+    List<ExportOrderItem> findByInventoryLot_Producer_UserId(Long userId);
+
     @Query("""
         SELECT COALESCE(SUM(item.quantityKg), 0)
         FROM ExportOrderItem item

@@ -34,3 +34,7 @@ build/
 
 # Local database credentials
 
+.env
+.env.*
+!.env.example
+application-local.properties

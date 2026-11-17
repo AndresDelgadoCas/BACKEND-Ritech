@@ -39,6 +39,9 @@ public class Client {
     @Column(length = 255)
     private String address;
 
+    @Column(name = "user_id")
+    private Long userId;
+
     @Generated(event = EventType.INSERT)
     @Column(name = "created_at", insertable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -101,4 +104,7 @@ public class Client {
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
+
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
 }

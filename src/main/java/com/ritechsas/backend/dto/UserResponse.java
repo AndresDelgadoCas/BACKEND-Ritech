@@ -1,5 +1,6 @@
-
 package com.ritechsas.backend.dto;
+
+import java.util.Set;
 
 public record UserResponse(
     Long id,
@@ -7,5 +8,10 @@ public record UserResponse(
     String username,
     String email,
     String role,
-    boolean active
+    Set<String> roles,
+    boolean active,
+    Long profileId,
+    String profileLabel,
+    String clientProfileLabel,
+    String producerProfileLabel
 ) {}
