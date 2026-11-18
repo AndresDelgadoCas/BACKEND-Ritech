@@ -33,6 +33,9 @@ public class Producer {
     @Column(name = "user_id")
     private Long userId;
 
+    @Column(name = "seller_status", nullable = false, length = 9)
+    private String sellerStatus = "ACTIVE";
+
     @Column(name = "created_at", insertable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -67,6 +70,8 @@ public class Producer {
         return createdAt;
     }
 
+    public String getSellerStatus() { return sellerStatus; }
+    public void setSellerStatus(String sellerStatus) { this.sellerStatus = sellerStatus; }
     public Long getUserId() { return userId; }
     public void setUserId(Long userId) { this.userId = userId; }
 

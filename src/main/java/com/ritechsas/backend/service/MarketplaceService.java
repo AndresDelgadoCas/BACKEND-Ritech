@@ -34,7 +34,24 @@ public class MarketplaceService {
 
     private User user(String username) { return users.findByUsername(username).orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuario no encontrado")); }
     private void requireRole(User user, String role) { if (!user.hasRole(role)) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No tienes permisos para esta operación"); }
-    private Producer producer(User user) { return producers.findByUserId(user.getId()).orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Tu cuenta todavía no tiene un perfil de productor vinculado. Contacta al administrador.")); }
+    private Producer producerProfile(User user) {
+        return producers.findByUserId(user.getId()).orElseThrow(() ->
+            new ResponseStatusException(HttpStatus.CONFLICT, "Tu cuenta todavía no tiene un perfil de productor vinculado. Contacta al administrador."));
+    }
+
+    private Producer activeProducer(User user) {
+        Producer producer = producerProfile(user);
+        if (!"ACTIVE".equalsIgnoreCase(producer.getSellerStatus())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Tu perfil de vendedor está suspendido. Puedes consultar tu historial, pero no realizar operaciones comerciales.");
+        }
+        return producer;
+    }
+
+    private void requireActiveListingSeller(ProductListing listing) {
+        if (!"ACTIVE".equalsIgnoreCase(listing.getProducer().getSellerStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "El vendedor de esta publicación está suspendido. Elimina el artículo del carrito o contacta a soporte.");
+        }
+    }
     private Client client(User user) { return clients.findByUserId(user.getId()).orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Tu cuenta todavía no tiene un perfil de comprador vinculado. Contacta al administrador.")); }
     private <T> T notFound(Optional<T> value, String message) { return value.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, message)); }
     private void log(User actor, String action, String entity, Long id, Map<String,Object> details) { AuditLog a = new AuditLog(); a.setActorUserId(actor == null ? null : actor.getId()); a.setAction(action); a.setEntityType(entity); a.setEntityId(id); a.setDetails(details); audit.save(a); }
@@ -45,19 +62,20 @@ public class MarketplaceService {
     @Transactional(readOnly = true)
     public List<ListingView> catalog() {
         return listings.findByStatusOrderByCreatedAtDesc(ProductListing.ListingStatus.PUBLISHED).stream()
+            .filter(l -> "ACTIVE".equalsIgnoreCase(l.getProducer().getSellerStatus()))
             .filter(l -> l.getInventoryLot().getStatus() == InventoryLot.LotStatus.AVAILABLE && l.getInventoryLot().getQuantity().compareTo(l.getMinimumOrderKg()) >= 0)
             .map(this::listingView).toList();
     }
 
     @Transactional(readOnly = true)
-    public List<ListingView> myListings(String username) { User u = user(username); requireRole(u, "VENDEDOR"); producer(u); return listings.findByProducer_UserIdOrderByCreatedAtDesc(u.getId()).stream().map(this::listingView).toList(); }
+    public List<ListingView> myListings(String username) { User u = user(username); requireRole(u, "VENDEDOR"); producerProfile(u); return listings.findByProducer_UserIdOrderByCreatedAtDesc(u.getId()).stream().map(this::listingView).toList(); }
 
     @Transactional(readOnly = true)
-    public List<LotOption> myLots(String username) { User u = user(username); requireRole(u, "VENDEDOR"); Producer p = producer(u); return lots.findByProducer_Id(p.getId()).stream().map(this::lotOption).toList(); }
+    public List<LotOption> myLots(String username) { User u = user(username); requireRole(u, "VENDEDOR"); Producer p = producerProfile(u); return lots.findByProducer_Id(p.getId()).stream().map(this::lotOption).toList(); }
 
     @Transactional
     public LotOption createLot(String username, LotRequest request) {
-        User u = user(username); requireRole(u, "VENDEDOR"); Producer p = producer(u);
+        User u = user(username); requireRole(u, "VENDEDOR"); Producer p = activeProducer(u);
         if (request.productId() == null || request.quantity() == null || request.quantity().compareTo(BigDecimal.ZERO) <= 0 || request.lotCode() == null || request.lotCode().isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Completa el producto, código y cantidad del lote");
         if (request.lotCode().trim().length() > 80) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El código del lote no puede superar 80 caracteres");
         if (lots.existsByLotCode(request.lotCode().trim())) throw new ResponseStatusException(HttpStatus.CONFLICT, "El código de lote ya existe");
@@ -75,7 +93,7 @@ public class MarketplaceService {
 
     @Transactional
     public ListingView createListing(String username, ListingRequest request) {
-        User u = user(username); requireRole(u, "VENDEDOR"); Producer p = producer(u);
+        User u = user(username); requireRole(u, "VENDEDOR"); Producer p = activeProducer(u);
         if (request.inventoryLotId() == null || request.title() == null || request.title().isBlank() || request.priceUsdPerKg() == null || request.priceUsdPerKg().compareTo(BigDecimal.ZERO) <= 0 || request.minimumOrderKg() == null || request.minimumOrderKg().compareTo(BigDecimal.ZERO) <= 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Revisa el título, el lote, el precio y el pedido mínimo");
         if (request.title().trim().length() > 180) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El título no puede superar 180 caracteres");
         BigDecimal normalizedPrice = request.priceUsdPerKg().setScale(2, RoundingMode.HALF_UP);
@@ -91,7 +109,7 @@ public class MarketplaceService {
 
     @Transactional
     public ListingView updateListing(String username, Long id, ListingRequest request) {
-        User u = user(username); requireRole(u, "VENDEDOR"); ProductListing listing = notFound(listings.findByIdAndProducer_UserId(id, u.getId()), "Publicación no encontrada");
+        User u = user(username); requireRole(u, "VENDEDOR"); activeProducer(u); ProductListing listing = notFound(listings.findByIdAndProducer_UserId(id, u.getId()), "Publicación no encontrada");
         InventoryLot lockedLot = notFound(lots.findByIdForUpdate(listing.getInventoryLot().getId()), "Lote no encontrado");
         listing.setInventoryLot(lockedLot);
         if (request.title() != null && !request.title().isBlank()) {
@@ -138,6 +156,7 @@ public class MarketplaceService {
         User u = user(username); requireRole(u, "COMPRADOR"); client(u);
         if (request.listingId() == null || request.quantityKg() == null || request.quantityKg().compareTo(BigDecimal.ZERO) <= 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cantidad inválida");
         Cart cart = activeCart(u); ProductListing listing = notFound(listings.findById(request.listingId()), "Publicación no encontrada");
+        requireActiveListingSeller(listing);
         if (listing.getStatus() != ProductListing.ListingStatus.PUBLISHED || listing.getInventoryLot().getStatus() != InventoryLot.LotStatus.AVAILABLE) throw new ResponseStatusException(HttpStatus.CONFLICT, "La publicación ya no está disponible");
         List<CartItem> current = cartItems.findByCart_Id(cart.getId());
         if (!current.isEmpty() && !Objects.equals(current.get(0).getListing().getProducer().getId(), listing.getProducer().getId())) throw new ResponseStatusException(HttpStatus.CONFLICT, "El carrito solo puede contener productos de un vendedor a la vez");
@@ -158,6 +177,8 @@ public class MarketplaceService {
         User u = user(username); requireRole(u, "COMPRADOR"); CartItem item = notFound(cartItems.findByIdAndCart_BuyerUserId(itemId, u.getId()), "Artículo del carrito no encontrado");
         if (request.quantityKg() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La cantidad es obligatoria");
         BigDecimal normalizedQuantity = request.quantityKg().setScale(3, RoundingMode.HALF_UP);
+        requireActiveListingSeller(item.getListing());
+        if (item.getListing().getStatus() != ProductListing.ListingStatus.PUBLISHED || item.getListing().getInventoryLot().getStatus() != InventoryLot.LotStatus.AVAILABLE) throw new ResponseStatusException(HttpStatus.CONFLICT, "La publicación ya no está disponible. Elimina el artículo del carrito.");
         if (normalizedQuantity.compareTo(item.getListing().getMinimumOrderKg()) < 0) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La cantidad es inferior al pedido mínimo");
         BigDecimal otherQuantityForLot = cartItems.findByCart_Id(item.getCart().getId()).stream()
             .filter(existing -> !Objects.equals(existing.getId(), item.getId()) && Objects.equals(existing.getListing().getInventoryLot().getId(), item.getListing().getInventoryLot().getId()))
@@ -185,6 +206,7 @@ public class MarketplaceService {
         for (CartItem item : items) {
             ProductListing listing = item.getListing();
             InventoryLot lot = lockedLots.get(listing.getInventoryLot().getId());
+            requireActiveListingSeller(listing);
             if (listing.getStatus() != ProductListing.ListingStatus.PUBLISHED || lot.getStatus() != InventoryLot.LotStatus.AVAILABLE || item.getQuantityKg().compareTo(listing.getMinimumOrderKg()) < 0) throw new ResponseStatusException(HttpStatus.CONFLICT, "El stock o la publicación cambió. Actualiza tu carrito e inténtalo de nuevo.");
             quantityByLot.merge(lot.getId(), item.getQuantityKg(), BigDecimal::add);
         }
@@ -216,14 +238,14 @@ public class MarketplaceService {
         User u = user(username); List<ExportOrder> found;
         String viewRole = requestedRole == null || requestedRole.isBlank() ? u.getRole().getName() : requestedRole.trim().toUpperCase(Locale.ROOT);
         if ("COMPRADOR".equals(viewRole) && u.hasRole("COMPRADOR")) { Client c = client(u); found = orders.findByClient_UserIdOrderByOrderDateDesc(u.getId()); }
-        else if ("VENDEDOR".equals(viewRole) && u.hasRole("VENDEDOR")) { producer(u); LinkedHashMap<Long,ExportOrder> unique = new LinkedHashMap<>(); for (ExportOrderItem item : orderItems.findByInventoryLot_Producer_UserId(u.getId())) unique.put(item.getExportOrder().getId(), item.getExportOrder()); found = unique.values().stream().sorted(Comparator.comparing(ExportOrder::getOrderDate).reversed()).toList(); }
+        else if ("VENDEDOR".equals(viewRole) && u.hasRole("VENDEDOR")) { producerProfile(u); LinkedHashMap<Long,ExportOrder> unique = new LinkedHashMap<>(); for (ExportOrderItem item : orderItems.findByInventoryLot_Producer_UserId(u.getId())) unique.put(item.getExportOrder().getId(), item.getExportOrder()); found = unique.values().stream().sorted(Comparator.comparing(ExportOrder::getOrderDate).reversed()).toList(); }
         else throw new ResponseStatusException(HttpStatus.FORBIDDEN, "El administrador no tiene acceso a pedidos comerciales");
         return found.stream().map(this::orderView).toList();
     }
 
     @Transactional
     public OrderView updateOrderStatus(String username, Long orderId, OrderStatusRequest request) {
-        User u = user(username); requireRole(u, "VENDEDOR"); producer(u); ExportOrder order = notFound(orders.findById(orderId), "Pedido no encontrado");
+        User u = user(username); requireRole(u, "VENDEDOR"); activeProducer(u); ExportOrder order = notFound(orders.findById(orderId), "Pedido no encontrado");
         List<ExportOrderItem> lines = orderItems.findByExportOrder_Id(orderId);
         if (lines.isEmpty() || lines.stream().anyMatch(i -> !Objects.equals(i.getInventoryLot().getProducer().getUserId(), u.getId()))) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Solo puedes gestionar pedidos de tus propios productos");
         ExportOrder.OrderStatus next; try { next = ExportOrder.OrderStatus.valueOf(request.status().toUpperCase(Locale.ROOT)); } catch (Exception ex) { throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Estado de pedido inválido"); }

@@ -32,6 +32,7 @@ public class UserManagementService {
     private final AuditLogRepository auditRepository;
     private final ProducerRepository producerRepository;
     private final ClientRepository clientRepository;
+    private final com.ritechsas.backend.repository.SellerStatusHistoryRepository sellerStatusHistoryRepository;
 
     public UserManagementService(
             UserRepository userRepository,
@@ -39,13 +40,15 @@ public class UserManagementService {
             PasswordEncoder passwordEncoder,
             AuditLogRepository auditRepository,
             ProducerRepository producerRepository,
-            ClientRepository clientRepository) {
+            ClientRepository clientRepository,
+            com.ritechsas.backend.repository.SellerStatusHistoryRepository sellerStatusHistoryRepository) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.auditRepository = auditRepository;
         this.producerRepository = producerRepository;
         this.clientRepository = clientRepository;
+        this.sellerStatusHistoryRepository = sellerStatusHistoryRepository;
     }
 
     @Transactional
@@ -54,9 +57,9 @@ public class UserManagementService {
         String email = request.email().trim().toLowerCase(Locale.ROOT);
         String roleName = request.role().trim().toUpperCase(Locale.ROOT);
 
-        if (!List.of("ADMINISTRADOR", "COMPRADOR").contains(roleName)) {
+        if (!List.of("ADMINISTRADOR", "COMPRADOR", "SOPORTE").contains(roleName)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "Solo se pueden crear cuentas ADMINISTRADOR o COMPRADOR. El rol VENDEDOR requiere aprobación.");
+                "Solo se pueden crear cuentas ADMINISTRADOR, SOPORTE o COMPRADOR. El rol VENDEDOR requiere aprobación.");
         }
         if (userRepository.existsByUsername(username)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "El nombre de usuario ya existe");
@@ -109,6 +112,46 @@ public class UserManagementService {
         return saved;
     }
 
+
+    @Transactional
+    public void setSellerStatus(Long producerId, String statusValue, String reason, String actorUsername) {
+        String next = statusValue == null ? "" : statusValue.trim().toUpperCase(Locale.ROOT);
+        if (!List.of("ACTIVE", "SUSPENDED").contains(next))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Estado de vendedor no válido");
+        if (reason == null || reason.isBlank())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Debes indicar el motivo del cambio");
+        if (reason.trim().length() > 500)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El motivo no puede superar 500 caracteres");
+        User actor = userRepository.findByUsername(actorUsername)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuario administrador no encontrado"));
+        if (!actor.isActive() || !actor.hasRole("ADMINISTRADOR")) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Solo un administrador activo puede decidir el estado comercial");
+        }
+        Producer producer = producerRepository.findById(producerId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Vendedor no encontrado"));
+        if (producer.getUserId() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "El perfil de productor no está vinculado a una cuenta de vendedor");
+        }
+        User seller = userRepository.findById(producer.getUserId())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "La cuenta asociada al vendedor ya no existe"));
+        if (!seller.hasRole("VENDEDOR")) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "La cuenta asociada ya no tiene el perfil VENDEDOR");
+        }
+        String previous = producer.getSellerStatus() == null ? "ACTIVE" : producer.getSellerStatus().trim().toUpperCase(Locale.ROOT);
+        if (next.equals(previous)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "El vendedor ya tiene el estado comercial " + previous);
+        }
+        producer.setSellerStatus(next);
+        producerRepository.save(producer);
+        com.ritechsas.backend.entity.SellerStatusHistory history = new com.ritechsas.backend.entity.SellerStatusHistory();
+        history.setProducerId(producerId); history.setChangedByUserId(actor.getId());
+        history.setPreviousStatus(previous); history.setNewStatus(next); history.setReason(reason.trim());
+        // Persist history through its repository.
+        sellerStatusHistoryRepository.save(history);
+        writeAudit(actor, "SELLER_STATUS_CHANGED", producerId, Map.of("previousStatus", previous, "newStatus", next, "reason", reason.trim()));
+    }
+
     @Transactional
     public void createClientProfile(Long userId, com.ritechsas.backend.dto.ClientRequest request, String actorUsername) {
         User actor = userRepository.findByUsername(actorUsername).orElseThrow();
@@ -148,7 +191,7 @@ public class UserManagementService {
     @Transactional
     public void updateRole(Long userId, String roleValue, String actorUsername) {
         String roleName = roleValue == null ? "" : roleValue.trim().toUpperCase(Locale.ROOT);
-        if (!List.of("ADMINISTRADOR", "COMPRADOR").contains(roleName)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El rol VENDEDOR solo se concede al aprobar una solicitud");
+        if (!List.of("ADMINISTRADOR", "COMPRADOR", "SOPORTE").contains(roleName)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El rol VENDEDOR solo se concede al aprobar una solicitud");
         User actor = userRepository.findByUsername(actorUsername).orElseThrow();
         User target = userRepository.findById(userId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuario no encontrado"));
         Role role = roleRepository.findByName(roleName).orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "El rol no existe en la base de datos"));
